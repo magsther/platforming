@@ -141,6 +141,74 @@ docker run -e OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4318/v1/tr
   -p 8080:8080 --rm fastapi-demo:local
 ```
 
+#### Part 5 – Enable Traces Inside Docker (with Correct Networking)
+If you try exporting traces from inside the container to Jaeger using:
+
+```
+docker run -e OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4318/v1/traces \
+  -e OTEL_SERVICE_NAME=fastapi-demo \
+  -p 8080:8080 --rm fastapi-demo:local
+```
+
+you might see connection errors if Jaeger isn’t reachable from the container.
+To fix that, run both containers on the same Docker network.
+
+1. Create a shared network : `docker network create observability` 
+2. Run Jaeger on that network:
+   
+   ```
+   docker run -d --name jaeger \
+  --network observability \
+  -e COLLECTOR_OTLP_ENABLED=true \
+  -p 16686:16686 -p 4318:4318 \
+  jaegertracing/all-in-one:1.57
+  ```
+3. Run the FastAPI app on the same network
+
+```
+docker run --rm \
+  --network observability \
+  -e OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318/v1/traces \
+  -e OTEL_SERVICE_NAME=fastapi-demo \
+  -p 8080:8080 fastapi-demo:local
+  ```
+
+4. Test it: `for i in {1..5}; do curl -s http://localhost:8080/checkout > /dev/null; done`
+
+Then open Jaeger → http://localhost:16686
+
+✅ You’ll now see traces for fastapi-demo.
+
+#### Optional: Use Docker Compose for One-Command Startup
+
+Create a `docker-compose.yml`:
+
+```
+version: "3.8"
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+
+  fastapi-demo:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318/v1/traces
+      - OTEL_SERVICE_NAME=fastapi-demo
+    depends_on:
+      - jaeger
+```
+
+Then run: `docker compose up --build`
+
+Both the app and Jaeger come online automatically and connect correctly.
+
 
 #### Phase 1 Outcome
 	•	FastAPI service runs locally
